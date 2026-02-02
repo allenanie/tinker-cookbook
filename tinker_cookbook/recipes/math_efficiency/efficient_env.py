@@ -144,11 +144,13 @@ ANSWER_HINT_TEXT = (
 
 SELF_REFINEMENT_TEMPLATE = """{task_prompt}
 
+Note: Aim for a correct AND concise solution. Shorter correct solutions receive higher rewards.
+
 {previous_attempts}
 
-Correctly solve the original question."""
+Based on the above attempts and feedback, provide a correct and concise solution."""
 
-SINGLE_ATTEMPT_TEMPLATE = """Previous attempt {attempt_num}:
+SINGLE_ATTEMPT_TEMPLATE = """Previous attempt {attempt_num} ({num_tokens} tokens):
 {previous_rollout}
 
 Feedback: {environment_feedback}"""
@@ -283,17 +285,28 @@ class EfficientGsm8kDataset(RLDataset):
 
                         # Get response tokens from the OTHER trajectory and decode
                         response_tokens = other_traj.transitions[0].ac.tokens
+                        num_tokens = len(response_tokens)
                         previous_rollout = _renderer.tokenizer.decode(response_tokens)
 
                         # Get reward from the OTHER trajectory to determine feedback
+                        # Reward > 0 means correct (and reward = max_tokens - num_tokens)
                         other_total_reward = sum(t.reward for t in other_traj.transitions)
                         if other_total_reward > 0:
-                            environment_feedback = "Correct! Your solution was valid."
+                            # Correct solution - include efficiency feedback
+                            environment_feedback = (
+                                f"Correct! Solution used {num_tokens} tokens. "
+                                f"Efficiency reward: {other_total_reward:.0f} (higher is better)."
+                            )
                         else:
-                            environment_feedback = "Incorrect. Please try again with a different approach."
+                            # Incorrect solution
+                            environment_feedback = (
+                                f"Incorrect ({num_tokens} tokens). "
+                                "The answer was wrong. Try a different approach."
+                            )
 
                         attempt_texts.append(SINGLE_ATTEMPT_TEMPLATE.format(
                             attempt_num=attempt_num,
+                            num_tokens=num_tokens,
                             previous_rollout=previous_rollout,
                             environment_feedback=environment_feedback,
                         ))
