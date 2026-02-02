@@ -6,6 +6,7 @@
 #   train_sft
 #   train_rl
 #   train_rl_answer
+#   train_rl_self_refinement
 #   run_all
 
 set -e
@@ -19,7 +20,7 @@ TEMPERATURE=1.0
 LORA_RANK=128
 
 # Wandb configuration
-WANDB_PROJECT="math-efficiency-interview"
+WANDB_PROJECT="tinker-sdpo"
 
 # Method 1 (SFT) config
 SFT_NUM_SAMPLES=16
@@ -47,6 +48,7 @@ WANDB_BASELINE_NAME="baseline-${NUM_PROBLEMS}p-${TIMESTAMP}"
 WANDB_SFT_NAME="sft-${NUM_PROBLEMS}p-${SFT_NUM_EPOCHS}ep-lr${SFT_LEARNING_RATE}-${TIMESTAMP}"
 WANDB_RL_NAME="rl-${NUM_PROBLEMS}p-${RL_NUM_EPOCHS}ep-${RL_GROUP_SIZE}x${RL_GROUPS_PER_BATCH}-lr${RL_LEARNING_RATE}-${TIMESTAMP}"
 WANDB_RL_ANSWER_NAME="rl-${NUM_PROBLEMS}p-${RL_NUM_EPOCHS}ep-${RL_GROUP_SIZE}x${RL_GROUPS_PER_BATCH}-lr${RL_LEARNING_RATE}-answerhint-${TIMESTAMP}"
+WANDB_RL_SELF_REFINE_NAME="rl-${NUM_PROBLEMS}p-${RL_NUM_EPOCHS}ep-${RL_GROUP_SIZE}x${RL_GROUPS_PER_BATCH}-lr${RL_LEARNING_RATE}-selfrefine-${TIMESTAMP}"
 
 mkdir -p "${DATA_DIR}" "${RESULTS_DIR}" "${CHECKPOINTS_DIR}"
 
@@ -143,6 +145,33 @@ train_rl_answer() {
     cp "${rl_log_path}/eval_results.json" "${RESULTS_DIR}/method2_answer_hint_eval.json" 2>/dev/null || true
 }
 
+train_rl_self_refinement() {
+    # Self-refinement strategy: train on augmented prompts that include
+    # the model's own successful rollout as "previous attempt" with feedback
+    local rl_log_path="${CHECKPOINTS_DIR}/rl_self_refinement"
+
+    uv run python -m tinker_cookbook.recipes.math_efficiency.train_rl \
+        model_name="${MODEL_NAME}" \
+        num_problems=${NUM_PROBLEMS} \
+        n_epochs=${RL_NUM_EPOCHS} \
+        group_size=${RL_GROUP_SIZE} \
+        groups_per_batch=${RL_GROUPS_PER_BATCH} \
+        learning_rate=${RL_LEARNING_RATE} \
+        self_refinement_strategy=true \
+        lora_rank=${LORA_RANK} \
+        max_tokens=${MAX_TOKENS} \
+        temperature=${TEMPERATURE} \
+        log_path="${rl_log_path}" \
+        wandb_project="${WANDB_PROJECT}" \
+        wandb_name="${WANDB_RL_SELF_REFINE_NAME}" \
+        eval_num_problems=${NUM_PROBLEMS} \
+        eval_samples_per_problem=${SAMPLES_PER_PROBLEM} \
+        save_every=${RL_SAVE_EVERY} \
+        behavior_if_log_dir_exists="delete"
+
+    cp "${rl_log_path}/eval_results.json" "${RESULTS_DIR}/method2_self_refinement_eval.json" 2>/dev/null || true
+}
+
 train_rl_x2() {
     local rl_log_path="${CHECKPOINTS_DIR}/rl_x2"
     local wandb_name="rl-${NUM_PROBLEMS}p-${RL_NUM_EPOCHS}ep-${RL_GROUP_SIZE_X2}x${RL_GROUPS_PER_BATCH}-lr${RL_LEARNING_RATE}-${TIMESTAMP}"
@@ -173,5 +202,6 @@ run_all() {
     train_sft
     train_rl
     train_rl_answer
+    train_rl_self_refinement
     train_rl_x2
 }

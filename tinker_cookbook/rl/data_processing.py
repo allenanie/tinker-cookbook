@@ -7,12 +7,12 @@ and assembling training batches.
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, List
+from typing import List
 
 import tinker
 import torch
 from tinker import TensorData
-from tinker_cookbook.rl.types import StrategyId, Trajectory, TrajectoryGroup
+from tinker_cookbook.rl.types import ContextTransform, StrategyId, Trajectory, TrajectoryGroup
 from tinker_cookbook.supervised.common import (
     create_rightshifted_model_input_and_leftshifted_targets,
 )
@@ -117,7 +117,7 @@ class SequenceAccumulator:
 def trajectory_to_data(
     traj: Trajectory,
     traj_advantage: float,
-    context_transform: Callable[[tinker.ModelInput, int], tinker.ModelInput] | None = None,
+    context_transform: ContextTransform | None = None,
 ) -> list[tinker.Datum]:
     """
     Return one or more Datum objects corresponding to the trajectory.
@@ -136,6 +136,14 @@ def trajectory_to_data(
 
     Then we will merge the first two observation-action pairs into a single Datum,
     and the last observation-action pair into a separate Datum.
+
+    Args:
+        traj: The trajectory to convert to training data.
+        traj_advantage: The advantage value for this trajectory.
+        context_transform: Optional function to transform observations before training.
+            Signature: (observation, turn_idx, trajectory) -> transformed_observation.
+            This allows transforms to access the full trajectory including response tokens,
+            enabling strategies like self-refinement.
     """
     acc = SequenceAccumulator()
 
@@ -168,7 +176,7 @@ def trajectory_to_data(
     for i_transition, transition in enumerate(traj.transitions):
         ob = transition.ob
         if context_transform is not None:
-            ob = context_transform(ob, i_transition)
+            ob = context_transform(ob, i_transition, traj)
         ob_flat = _flatten_chunks(ob.chunks)
         ac_with_logprobs = transition.ac
         if len(acc.full_sequence) == 0:

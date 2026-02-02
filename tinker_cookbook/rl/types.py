@@ -18,6 +18,12 @@ Logprobs: TypeAlias = list[float]
 Metrics: TypeAlias = dict[str, float | int]
 Logs: TypeAlias = dict[str, str | int | float]
 
+# Forward reference for Trajectory (defined below)
+# Context transform signature: (observation, turn_idx, trajectory) -> transformed_observation
+# The trajectory parameter allows transforms to access the full trajectory including
+# the model's response tokens, which enables strategies like self-refinement.
+ContextTransform: TypeAlias = Callable[["Observation", int, "Trajectory"], "Observation"]
+
 
 class StrategyId(Enum):
     """Base enum for strategy identifiers."""
@@ -105,7 +111,7 @@ class EnvGroupBuilder(ABC):
 
     # Optional strategy metadata (always present on the base class).
     strategy_id: StrategyId | None = None
-    context_transform: Callable[[Observation, int], Observation] | None = None
+    context_transform: ContextTransform | None = None
 
     @abstractmethod
     async def make_envs(self) -> Sequence[Env]:
@@ -146,7 +152,7 @@ class TrajectoryGroup:
     final_rewards_G: list[float]  # computed by the EnvGroupBuilder, looking at whole group
     metrics_G: list[Metrics]
     strategy_id: StrategyId | None = None
-    context_transform: Callable[[Observation, int], Observation] | None = None
+    context_transform: ContextTransform | None = None
 
     def get_total_rewards(self) -> list[float]:
         """

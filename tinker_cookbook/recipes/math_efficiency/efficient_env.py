@@ -33,6 +33,7 @@ from tinker_cookbook.rl.types import (
     RLDatasetBuilder,
     StepResult,
     StrategyId,
+    Trajectory,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import logtree
@@ -124,6 +125,7 @@ class ExItStrategy(StrategyId):
     IID = "iid"
     PROMPT_AUG = "prompt_aug"
     ANSWER_HINT = "answer_hint"
+    SELF_REFINEMENT = "self_refinement"
 
 
 @dataclass(frozen=True)
@@ -137,6 +139,16 @@ ANSWER_HINT_TEXT = (
     "The answer is {answer}. Solve this problem as if you didn't know the answer, "
     "but then stop once you reach the answer. No need to verify or try again."
 )
+
+SELF_REFINEMENT_TEMPLATE = """{task_prompt}
+
+Your previous attempt:
+{previous_rollout}
+
+The following is feedback from your earlier attempt:
+{environment_feedback}
+
+Correctly solve the original question."""
 
 
 
@@ -223,13 +235,59 @@ class EfficientGsm8kDataset(RLDataset):
             question_suffix_extra = None
             if config.strategy_id == ExItStrategy.ANSWER_HINT:
                 question_suffix_extra = "\n\n" + ANSWER_HINT_TEXT.format(answer=answer)
+
             context_transform = None
-            if training_prefix != sampling_prefix or question_suffix_extra is not None:
+
+            if config.strategy_id == ExItStrategy.SELF_REFINEMENT:
+                # Self-refinement: use the trajectory's response as "previous attempt"
+                renderer = self.renderer
+
+                def _self_refinement_transform(
+                    _ob: tinker.ModelInput,
+                    _turn_idx: int,
+                    _traj: Trajectory,
+                    *,
+                    _task_prompt: str = question,
+                    _renderer: renderers.Renderer = renderer,
+                    _training_prefix: list[renderers.Message] = training_prefix,
+                ) -> tinker.ModelInput:
+                    # Extract the model's response from the trajectory
+                    if not _traj.transitions:
+                        # Fallback if no transitions (shouldn't happen)
+                        convo = _training_prefix + [{"role": "user", "content": _task_prompt}]
+                        return _renderer.build_generation_prompt(convo)
+
+                    # Get response tokens from first transition and decode
+                    response_tokens = _traj.transitions[0].ac.tokens
+                    previous_rollout = _renderer.tokenizer.decode(response_tokens)
+
+                    # Get reward to determine feedback
+                    total_reward = sum(t.reward for t in _traj.transitions)
+                    if total_reward > 0:
+                        environment_feedback = "Correct! Your solution was valid."
+                    else:
+                        environment_feedback = "Incorrect. Please try again with a different approach."
+
+                    # Build the augmented prompt
+                    augmented_content = SELF_REFINEMENT_TEMPLATE.format(
+                        task_prompt=_task_prompt,
+                        previous_rollout=previous_rollout,
+                        environment_feedback=environment_feedback,
+                    )
+
+                    convo = _training_prefix + [{"role": "user", "content": augmented_content}]
+                    return _renderer.build_generation_prompt(convo)
+
+                context_transform = _self_refinement_transform
+
+            elif training_prefix != sampling_prefix or question_suffix_extra is not None:
+                # Standard transform: just change the prefix/question
                 renderer = self.renderer
 
                 def _transform(
                     _ob: tinker.ModelInput,
                     _turn_idx: int,
+                    _traj: Trajectory,  # New parameter (unused in this transform)
                     *,
                     _question: str = question,
                     _renderer: renderers.Renderer = renderer,
@@ -239,6 +297,7 @@ class EfficientGsm8kDataset(RLDataset):
                     return _renderer.build_generation_prompt(convo)
 
                 context_transform = _transform
+
             builders.append(
                 EfficientProblemGroupBuilder(
                     env_thunk=partial(

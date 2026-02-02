@@ -74,6 +74,7 @@ class CLIConfig:
     temperature: float = 1.0
     prompt_aug_system: str | None = None
     answer_hint_strategy: bool = False
+    self_refinement_strategy: bool = False  # Train on augmented prompts with previous rollout
 
     # No KL penalty for hard problems (per compute-optimal scaling)
     kl_penalty_coef: float = 0.0
@@ -146,8 +147,19 @@ async def cli_main(cli_config: CLIConfig):
 
     # Create dataset builder
     strategy_configs = None
-    if cli_config.prompt_aug_system is not None:
+    if cli_config.self_refinement_strategy:
+        # Self-refinement: train on prompts that include the model's own successful rollout
         base_prefix: list[dict[str, str]] = []
+        strategy_configs = [
+            ExItStrategyConfig(
+                strategy_id=ExItStrategy.SELF_REFINEMENT,
+                sampling_prefix=base_prefix,
+                training_prefix=base_prefix,
+            ),
+        ]
+        logger.info("Using self-refinement strategy (training on augmented prompts with previous rollout)")
+    elif cli_config.prompt_aug_system is not None:
+        base_prefix = []
         aug_prefix = base_prefix + [
             {"role": "system", "content": cli_config.prompt_aug_system}
         ]
