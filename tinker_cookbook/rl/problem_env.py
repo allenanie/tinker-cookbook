@@ -1,7 +1,7 @@
 import logging
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Sequence, Callable
 
 import tinker
 from tinker_cookbook import renderers
