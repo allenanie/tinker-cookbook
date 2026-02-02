@@ -10,6 +10,7 @@ getting higher rewards. Incorrect answers get 0.
 """
 
 import math
+import random
 from dataclasses import dataclass
 from functools import partial
 from typing import Literal, Sequence, cast
@@ -34,6 +35,7 @@ from tinker_cookbook.rl.types import (
     StepResult,
     StrategyId,
     Trajectory,
+    TrajectoryGroup,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import logtree
@@ -239,31 +241,44 @@ class EfficientGsm8kDataset(RLDataset):
             context_transform = None
 
             if config.strategy_id == ExItStrategy.SELF_REFINEMENT:
-                # Self-refinement: use the trajectory's response as "previous attempt"
+                # Self-refinement: use a random OTHER trajectory from the group as "previous attempt"
                 renderer = self.renderer
 
                 def _self_refinement_transform(
                     _ob: tinker.ModelInput,
                     _turn_idx: int,
                     _traj: Trajectory,
+                    _traj_group: TrajectoryGroup,
+                    _traj_idx: int,
                     *,
                     _task_prompt: str = question,
                     _renderer: renderers.Renderer = renderer,
                     _training_prefix: list[renderers.Message] = training_prefix,
                 ) -> tinker.ModelInput:
-                    # Extract the model's response from the trajectory
-                    if not _traj.transitions:
-                        # Fallback if no transitions (shouldn't happen)
+                    # Pick a random DIFFERENT trajectory from the group to use as "previous attempt"
+                    num_trajs = len(_traj_group.trajectories_G)
+                    if num_trajs <= 1:
+                        # Only one trajectory, can't pick a different one - use original prompt
                         convo = _training_prefix + [{"role": "user", "content": _task_prompt}]
                         return _renderer.build_generation_prompt(convo)
 
-                    # Get response tokens from first transition and decode
-                    response_tokens = _traj.transitions[0].ac.tokens
+                    # Pick a random index different from current
+                    other_indices = [i for i in range(num_trajs) if i != _traj_idx]
+                    other_idx = random.choice(other_indices)
+                    other_traj = _traj_group.trajectories_G[other_idx]
+
+                    # Extract the other trajectory's response
+                    if not other_traj.transitions:
+                        convo = _training_prefix + [{"role": "user", "content": _task_prompt}]
+                        return _renderer.build_generation_prompt(convo)
+
+                    # Get response tokens from the OTHER trajectory and decode
+                    response_tokens = other_traj.transitions[0].ac.tokens
                     previous_rollout = _renderer.tokenizer.decode(response_tokens)
 
-                    # Get reward to determine feedback
-                    total_reward = sum(t.reward for t in _traj.transitions)
-                    if total_reward > 0:
+                    # Get reward from the OTHER trajectory to determine feedback
+                    other_total_reward = sum(t.reward for t in other_traj.transitions)
+                    if other_total_reward > 0:
                         environment_feedback = "Correct! Your solution was valid."
                     else:
                         environment_feedback = "Incorrect. Please try again with a different approach."
@@ -287,7 +302,9 @@ class EfficientGsm8kDataset(RLDataset):
                 def _transform(
                     _ob: tinker.ModelInput,
                     _turn_idx: int,
-                    _traj: Trajectory,  # New parameter (unused in this transform)
+                    _traj: Trajectory,
+                    _traj_group: TrajectoryGroup,  # Unused in this transform
+                    _traj_idx: int,  # Unused in this transform
                     *,
                     _question: str = question,
                     _renderer: renderers.Renderer = renderer,

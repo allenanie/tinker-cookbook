@@ -124,6 +124,15 @@ def test_strategy_configs_builders_context_transform():
     assert aug_builder.strategy_id == ExItStrategy.PROMPT_AUG
     assert aug_builder.context_transform is not None
 
-    transformed = aug_builder.context_transform(tinker.ModelInput.empty(), 0)
+    # Create dummy trajectory and trajectory group for testing
+    dummy_traj = Trajectory(transitions=[], final_ob=tinker.ModelInput.empty())
+    dummy_traj_group = TrajectoryGroup(
+        trajectories_G=[dummy_traj],
+        final_rewards_G=[0.0],
+        metrics_G=[{}],
+    )
+    transformed = aug_builder.context_transform(
+        tinker.ModelInput.empty(), 0, dummy_traj, dummy_traj_group, 0
+    )
     assert isinstance(transformed, tinker.ModelInput)
     assert transformed.length == 1

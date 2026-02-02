@@ -1,13 +1,14 @@
 import logging
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Sequence
 
 import tinker
 from tinker_cookbook import renderers
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.rl.types import (
     Action,
+    ContextTransform,
     Env,
     EnvGroupBuilder,
     Metrics,
@@ -92,7 +93,7 @@ class ProblemGroupBuilder(EnvGroupBuilder):
     num_envs: int
     dataset_name: str = "problems"
     strategy_id: StrategyId | None = None
-    context_transform: Callable[[Observation, int], Observation] | None = None
+    context_transform: ContextTransform | None = None
 
     async def make_envs(self) -> Sequence[Env]:
         return [self.env_thunk() for _ in range(self.num_envs)]

@@ -118,6 +118,8 @@ def trajectory_to_data(
     traj: Trajectory,
     traj_advantage: float,
     context_transform: ContextTransform | None = None,
+    traj_group: "TrajectoryGroup | None" = None,
+    traj_idx: int = 0,
 ) -> list[tinker.Datum]:
     """
     Return one or more Datum objects corresponding to the trajectory.
@@ -141,9 +143,11 @@ def trajectory_to_data(
         traj: The trajectory to convert to training data.
         traj_advantage: The advantage value for this trajectory.
         context_transform: Optional function to transform observations before training.
-            Signature: (observation, turn_idx, trajectory) -> transformed_observation.
-            This allows transforms to access the full trajectory including response tokens,
-            enabling strategies like self-refinement.
+            Signature: (observation, turn_idx, trajectory, traj_group, traj_idx) -> transformed_observation.
+            This allows transforms to access the full trajectory group including other
+            trajectories' responses, enabling strategies like self-refinement.
+        traj_group: The full trajectory group this trajectory belongs to.
+        traj_idx: The index of this trajectory within the group.
     """
     acc = SequenceAccumulator()
 
@@ -176,7 +180,16 @@ def trajectory_to_data(
     for i_transition, transition in enumerate(traj.transitions):
         ob = transition.ob
         if context_transform is not None:
-            ob = context_transform(ob, i_transition, traj)
+            # Create a dummy TrajectoryGroup if not provided (for backwards compatibility)
+            if traj_group is None:
+                from tinker_cookbook.rl.types import TrajectoryGroup
+                traj_group = TrajectoryGroup(
+                    trajectories_G=[traj],
+                    final_rewards_G=[0.0],
+                    metrics_G=[{}],
+                )
+                traj_idx = 0
+            ob = context_transform(ob, i_transition, traj, traj_group, traj_idx)
         ob_flat = _flatten_chunks(ob.chunks)
         ac_with_logprobs = transition.ac
         if len(acc.full_sequence) == 0:
@@ -246,6 +259,8 @@ def assemble_training_data(
                 traj,
                 float(traj_advantage) * weight_scale,
                 context_transform=traj_group.context_transform,
+                traj_group=traj_group,
+                traj_idx=i_traj,
             )
             data_D.extend(new_data)
             metadata_D.extend([dict(group_idx=i_group, traj_idx=i_traj) for _ in new_data])

@@ -3,7 +3,7 @@ import tinker
 
 from tinker_cookbook.completers import TokensWithLogprobs
 from tinker_cookbook.rl.data_processing import trajectory_to_data
-from tinker_cookbook.rl.types import Trajectory, Transition
+from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup, Transition
 
 
 def _flatten_model_input(model_input: tinker.ModelInput) -> list[int]:
@@ -29,7 +29,13 @@ def test_context_transform_swaps_prompt():
     )
     traj = Trajectory(transitions=[transition], final_ob=tinker.ModelInput.empty())
 
-    def transform(_ob: tinker.ModelInput, _turn_idx: int) -> tinker.ModelInput:
+    def transform(
+        _ob: tinker.ModelInput,
+        _turn_idx: int,
+        _traj: Trajectory,
+        _traj_group: TrajectoryGroup,
+        _traj_idx: int,
+    ) -> tinker.ModelInput:
         return tinker.ModelInput.from_ints([9, 9])
 
     data = trajectory_to_data(traj, traj_advantage=1.0, context_transform=transform)
@@ -77,7 +83,7 @@ def test_context_transform_prefix_merging_single_datum():
     data = trajectory_to_data(
         traj,
         traj_advantage=1.0,
-        context_transform=lambda ob, _turn_idx: ob,
+        context_transform=lambda ob, _turn_idx, _traj, _traj_group, _traj_idx: ob,
     )
     assert len(data) == 1
     datum = data[0]
@@ -116,7 +122,13 @@ def test_context_transform_breaks_prefix_splits_datums():
         final_ob=tinker.ModelInput.empty(),
     )
 
-    def transform(ob: tinker.ModelInput, turn_idx: int) -> tinker.ModelInput:
+    def transform(
+        ob: tinker.ModelInput,
+        turn_idx: int,
+        _traj: Trajectory,
+        _traj_group: TrajectoryGroup,
+        _traj_idx: int,
+    ) -> tinker.ModelInput:
         if turn_idx == 1:
             return tinker.ModelInput.from_ints([8])
         return ob

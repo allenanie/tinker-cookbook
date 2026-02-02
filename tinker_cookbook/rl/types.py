@@ -19,10 +19,13 @@ Metrics: TypeAlias = dict[str, float | int]
 Logs: TypeAlias = dict[str, str | int | float]
 
 # Forward reference for Trajectory (defined below)
-# Context transform signature: (observation, turn_idx, trajectory) -> transformed_observation
-# The trajectory parameter allows transforms to access the full trajectory including
-# the model's response tokens, which enables strategies like self-refinement.
-ContextTransform: TypeAlias = Callable[["Observation", int, "Trajectory"], "Observation"]
+# Context transform signature: (observation, turn_idx, trajectory, trajectory_group, traj_idx) -> transformed_observation
+# The trajectory_group and traj_idx parameters allow transforms to access other trajectories
+# in the same group, enabling strategies like self-refinement where we condition on
+# a different trajectory's response as "previous attempt".
+ContextTransform: TypeAlias = Callable[
+    ["Observation", int, "Trajectory", "TrajectoryGroup", int], "Observation"
+]
 
 
 class StrategyId(Enum):
