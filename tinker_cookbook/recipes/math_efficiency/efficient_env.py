@@ -144,13 +144,14 @@ ANSWER_HINT_TEXT = (
 
 SELF_REFINEMENT_TEMPLATE = """{task_prompt}
 
-Your previous attempt:
-{previous_rollout}
-
-The following is feedback from your earlier attempt:
-{environment_feedback}
+{previous_attempts}
 
 Correctly solve the original question."""
+
+SINGLE_ATTEMPT_TEMPLATE = """Previous attempt {attempt_num}:
+{previous_rollout}
+
+Feedback: {environment_feedback}"""
 
 
 
@@ -187,6 +188,7 @@ class EfficientGsm8kDataset(RLDataset):
         seed: int = 42,
         n_epochs: int = 1,
         max_tokens: int = 4096,
+        in_context_size: int = 1,
     ):
         self.ds = get_fixed_gsm8k_problems(num_problems, seed)
         self.batch_size = batch_size
@@ -203,6 +205,7 @@ class EfficientGsm8kDataset(RLDataset):
         ]
         self.n_epochs = n_epochs
         self.max_tokens = max_tokens
+        self.in_context_size = in_context_size  # Number of other trajectories to include as context
         self._batches_per_epoch = math.ceil(len(self.ds) / self.batch_size)
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
@@ -241,8 +244,9 @@ class EfficientGsm8kDataset(RLDataset):
             context_transform = None
 
             if config.strategy_id == ExItStrategy.SELF_REFINEMENT:
-                # Self-refinement: use a random OTHER trajectory from the group as "previous attempt"
+                # Self-refinement: use random OTHER trajectories from the group as "previous attempts"
                 renderer = self.renderer
+                in_context_size = self.in_context_size
 
                 def _self_refinement_transform(
                     _ob: tinker.ModelInput,
@@ -254,40 +258,56 @@ class EfficientGsm8kDataset(RLDataset):
                     _task_prompt: str = question,
                     _renderer: renderers.Renderer = renderer,
                     _training_prefix: list[renderers.Message] = training_prefix,
+                    _in_context_size: int = in_context_size,
                 ) -> tinker.ModelInput:
-                    # Pick a random DIFFERENT trajectory from the group to use as "previous attempt"
+                    # Pick random DIFFERENT trajectories from the group to use as "previous attempts"
                     num_trajs = len(_traj_group.trajectories_G)
                     if num_trajs <= 1:
                         # Only one trajectory, can't pick a different one - use original prompt
                         convo = _training_prefix + [{"role": "user", "content": _task_prompt}]
                         return _renderer.build_generation_prompt(convo)
 
-                    # Pick a random index different from current
+                    # Pick random indices different from current (up to in_context_size)
                     other_indices = [i for i in range(num_trajs) if i != _traj_idx]
-                    other_idx = random.choice(other_indices)
-                    other_traj = _traj_group.trajectories_G[other_idx]
+                    num_to_sample = min(_in_context_size, len(other_indices))
+                    sampled_indices = random.sample(other_indices, num_to_sample)
 
-                    # Extract the other trajectory's response
-                    if not other_traj.transitions:
+                    # Build previous attempts section
+                    attempt_texts = []
+                    for attempt_num, other_idx in enumerate(sampled_indices, start=1):
+                        other_traj = _traj_group.trajectories_G[other_idx]
+
+                        # Skip if no transitions
+                        if not other_traj.transitions:
+                            continue
+
+                        # Get response tokens from the OTHER trajectory and decode
+                        response_tokens = other_traj.transitions[0].ac.tokens
+                        previous_rollout = _renderer.tokenizer.decode(response_tokens)
+
+                        # Get reward from the OTHER trajectory to determine feedback
+                        other_total_reward = sum(t.reward for t in other_traj.transitions)
+                        if other_total_reward > 0:
+                            environment_feedback = "Correct! Your solution was valid."
+                        else:
+                            environment_feedback = "Incorrect. Please try again with a different approach."
+
+                        attempt_texts.append(SINGLE_ATTEMPT_TEMPLATE.format(
+                            attempt_num=attempt_num,
+                            previous_rollout=previous_rollout,
+                            environment_feedback=environment_feedback,
+                        ))
+
+                    # If no valid attempts, fall back to original prompt
+                    if not attempt_texts:
                         convo = _training_prefix + [{"role": "user", "content": _task_prompt}]
                         return _renderer.build_generation_prompt(convo)
 
-                    # Get response tokens from the OTHER trajectory and decode
-                    response_tokens = other_traj.transitions[0].ac.tokens
-                    previous_rollout = _renderer.tokenizer.decode(response_tokens)
-
-                    # Get reward from the OTHER trajectory to determine feedback
-                    other_total_reward = sum(t.reward for t in other_traj.transitions)
-                    if other_total_reward > 0:
-                        environment_feedback = "Correct! Your solution was valid."
-                    else:
-                        environment_feedback = "Incorrect. Please try again with a different approach."
-
-                    # Build the augmented prompt
+                    # Build the augmented prompt with all previous attempts
+                    previous_attempts = "\n\n".join(attempt_texts)
                     augmented_content = SELF_REFINEMENT_TEMPLATE.format(
                         task_prompt=_task_prompt,
-                        previous_rollout=previous_rollout,
-                        environment_feedback=environment_feedback,
+                        previous_attempts=previous_attempts,
                     )
 
                     convo = _training_prefix + [{"role": "user", "content": augmented_content}]
@@ -348,6 +368,7 @@ class EfficientGsm8kDatasetBuilder(RLDatasetBuilder):
     max_tokens: int = 4096
     convo_prefix: list[renderers.Message] | None = None
     strategy_configs: list[ExItStrategyConfig] | None = None
+    in_context_size: int = 1  # Number of other trajectories to include as context for self-refinement
 
     async def __call__(self) -> tuple[EfficientGsm8kDataset, None]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
@@ -363,6 +384,7 @@ class EfficientGsm8kDatasetBuilder(RLDatasetBuilder):
                 seed=self.seed,
                 n_epochs=self.n_epochs,
                 max_tokens=self.max_tokens,
+                in_context_size=self.in_context_size,
             ),
             None,  # No separate test dataset
         )

@@ -75,6 +75,7 @@ class CLIConfig:
     prompt_aug_system: str | None = None
     answer_hint_strategy: bool = False
     self_refinement_strategy: bool = False  # Train on augmented prompts with previous rollout
+    in_context_size: int = 1  # Number of other trajectories to include as context for self-refinement
 
     # No KL penalty for hard problems (per compute-optimal scaling)
     kl_penalty_coef: float = 0.0
@@ -212,6 +213,7 @@ async def cli_main(cli_config: CLIConfig):
         n_epochs=cli_config.n_epochs,
         max_tokens=cli_config.max_tokens,
         strategy_configs=strategy_configs,
+        in_context_size=cli_config.in_context_size,
     )
 
     # Create streaming config if requested
