@@ -169,9 +169,17 @@ class EfficientProblemGroupBuilder(ProblemGroupBuilder):
         return [self.env_thunk() for _ in range(self.num_envs)]
 
 
-def get_fixed_gsm8k_problems(num_problems: int = 100, seed: int = 42) -> Dataset:
-    """Load a fixed set of GSM-8K problems for consistent training/evaluation."""
-    ds = cast(Dataset, load_dataset("openai/gsm8k", name="main", split="train"))
+def get_fixed_gsm8k_problems(
+    num_problems: int = 100, seed: int = 42, split: str = "train"
+) -> Dataset:
+    """Load a fixed set of GSM-8K problems for consistent training/evaluation.
+    
+    Args:
+        num_problems: Number of problems to load.
+        seed: Random seed for shuffling.
+        split: Dataset split to use ("train" or "test").
+    """
+    ds = cast(Dataset, load_dataset("openai/gsm8k", name="main", split=split))
     ds = ds.shuffle(seed=seed)
     return ds.select(range(min(num_problems, len(ds))))
 
@@ -191,8 +199,9 @@ class EfficientGsm8kDataset(RLDataset):
         n_epochs: int = 1,
         max_tokens: int = 4096,
         in_context_size: int = 1,
+        split: str = "train",
     ):
-        self.ds = get_fixed_gsm8k_problems(num_problems, seed)
+        self.ds = get_fixed_gsm8k_problems(num_problems, seed, split=split)
         self.batch_size = batch_size
         self.group_size = group_size
         self.renderer = renderer
@@ -383,21 +392,53 @@ class EfficientGsm8kDatasetBuilder(RLDatasetBuilder):
     strategy_configs: list[ExItStrategyConfig] | None = None
     in_context_size: int = 1  # Number of other trajectories to include as context for self-refinement
 
-    async def __call__(self) -> tuple[EfficientGsm8kDataset, None]:
+    # Test set configuration for periodic evaluation during training
+    eval_num_problems: int | None = None  # If set, creates a test set evaluator
+    eval_split: str = "test"  # Dataset split for evaluation ("train" or "test")
+
+    async def __call__(self) -> tuple[EfficientGsm8kDataset, EfficientGsm8kDataset | None]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
-        return (
-            EfficientGsm8kDataset(
-                batch_size=self.batch_size,
-                group_size=self.group_size,
+
+        # Training dataset (always uses train split)
+        train_dataset = EfficientGsm8kDataset(
+            batch_size=self.batch_size,
+            group_size=self.group_size,
+            renderer=renderer,
+            convo_prefix=self.convo_prefix,
+            strategy_configs=self.strategy_configs,
+            num_problems=self.num_problems,
+            seed=self.seed,
+            n_epochs=self.n_epochs,
+            max_tokens=self.max_tokens,
+            in_context_size=self.in_context_size,
+            split="train",
+        )
+
+        # Test dataset for periodic evaluation (optional)
+        test_dataset = None
+        if self.eval_num_problems is not None and self.eval_num_problems > 0:
+            # Use IID strategy only for evaluation (no context transform needed)
+            base_prefix = self.convo_prefix or []
+            eval_strategy = [
+                ExItStrategyConfig(
+                    strategy_id=ExItStrategy.IID,
+                    sampling_prefix=base_prefix,
+                    training_prefix=base_prefix,
+                )
+            ]
+            test_dataset = EfficientGsm8kDataset(
+                batch_size=self.eval_num_problems,  # All problems in one batch for eval
+                group_size=1,  # Single sample per problem for fast eval
                 renderer=renderer,
                 convo_prefix=self.convo_prefix,
-                strategy_configs=self.strategy_configs,
-                num_problems=self.num_problems,
+                strategy_configs=eval_strategy,
+                num_problems=self.eval_num_problems,
                 seed=self.seed,
-                n_epochs=self.n_epochs,
+                n_epochs=1,
                 max_tokens=self.max_tokens,
-                in_context_size=self.in_context_size,
-            ),
-            None,  # No separate test dataset
-        )
+                in_context_size=1,
+                split=self.eval_split,
+            )
+
+        return (train_dataset, test_dataset)

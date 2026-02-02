@@ -69,9 +69,17 @@ class EvalResults(BaseModel):
     efficiency: float  # accuracy / (mean_tokens / 100)
 
 
-def get_fixed_gsm8k_problems(num_problems: int = 100, seed: int = 42) -> Dataset:
-    """Load a fixed set of GSM-8K problems for consistent evaluation."""
-    ds = cast(Dataset, load_dataset("openai/gsm8k", name="main", split="train"))
+def get_fixed_gsm8k_problems(
+    num_problems: int = 100, seed: int = 42, split: str = "train"
+) -> Dataset:
+    """Load a fixed set of GSM-8K problems for consistent evaluation.
+    
+    Args:
+        num_problems: Number of problems to load.
+        seed: Random seed for shuffling.
+        split: Dataset split to use ("train" or "test").
+    """
+    ds = cast(Dataset, load_dataset("openai/gsm8k", name="main", split=split))
     ds = ds.shuffle(seed=seed)
     return ds.select(range(min(num_problems, len(ds))))
 
@@ -263,8 +271,13 @@ async def run_evaluation(
     base_url: str | None = None,
     renderer_name: str | None = None,
     concurrency: int = 32,
+    eval_split: str = "test",
 ) -> EvalResults:
-    """Run full evaluation on GSM-8K problems."""
+    """Run full evaluation on GSM-8K problems.
+    
+    Args:
+        eval_split: Dataset split to evaluate on ("train" or "test"). Default "test" for holdout.
+    """
     # Setup
     service_client = tinker.ServiceClient(base_url=base_url)
 
@@ -278,8 +291,8 @@ async def run_evaluation(
     renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
 
     # Load fixed problems
-    dataset = get_fixed_gsm8k_problems(num_problems)
-    logger.info(f"Evaluating on {len(dataset)} problems with {samples_per_problem} samples each (concurrency={concurrency})")
+    dataset = get_fixed_gsm8k_problems(num_problems, split=eval_split)
+    logger.info(f"Evaluating on {len(dataset)} problems from '{eval_split}' split with {samples_per_problem} samples each (concurrency={concurrency})")
 
     # Build tasks for all problems
     semaphore = asyncio.Semaphore(concurrency)
@@ -413,6 +426,9 @@ class CLIConfig:
     renderer_name: str | None = None
     output_path: str | None = None
 
+    # Dataset split for evaluation ("train" or "test")
+    eval_split: str = "test"
+
     # Wandb logging
     wandb_project: str | None = "math-efficiency-interview"
     wandb_name: str | None = None  # e.g., "baseline-eval", "sft-eval", "rl-eval"
@@ -453,6 +469,7 @@ async def cli_main(config: CLIConfig):
         base_url=config.base_url,
         renderer_name=config.renderer_name,
         concurrency=config.concurrency,
+        eval_split=config.eval_split,
     )
 
     print_results_table(results)

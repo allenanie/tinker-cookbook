@@ -27,9 +27,17 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 logger = logging.getLogger(__name__)
 
 
-def get_fixed_gsm8k_problems(num_problems: int = 100, seed: int = 42) -> Dataset:
-    """Load a fixed set of GSM-8K problems for consistent evaluation."""
-    ds = cast(Dataset, load_dataset("openai/gsm8k", name="main", split="train"))
+def get_fixed_gsm8k_problems(
+    num_problems: int = 100, seed: int = 42, split: str = "train"
+) -> Dataset:
+    """Load a fixed set of GSM-8K problems for consistent evaluation.
+    
+    Args:
+        num_problems: Number of problems to load.
+        seed: Random seed for shuffling.
+        split: Dataset split to use ("train" or "test").
+    """
+    ds = cast(Dataset, load_dataset("openai/gsm8k", name="main", split=split))
     ds = ds.shuffle(seed=seed)
     return ds.select(range(min(num_problems, len(ds))))
 

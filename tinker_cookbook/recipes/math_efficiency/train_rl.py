@@ -90,7 +90,7 @@ class CLIConfig:
     compute_post_kl: bool = False
 
     # Evals
-    eval_every: int = 10
+    eval_every: int = 1  # Evaluate every batch (set to 0 to disable)
 
     # Checkpointing
     save_every: int = 10
@@ -114,6 +114,7 @@ class CLIConfig:
     run_final_eval: bool = True
     eval_num_problems: int = 10
     eval_samples_per_problem: int = 4
+    eval_split: str = "test"  # Dataset split for evaluation ("train" or "test")
 
 
 async def cli_main(cli_config: CLIConfig):
@@ -214,6 +215,9 @@ async def cli_main(cli_config: CLIConfig):
         max_tokens=cli_config.max_tokens,
         strategy_configs=strategy_configs,
         in_context_size=cli_config.in_context_size,
+        # Periodic evaluation during training
+        eval_num_problems=cli_config.eval_num_problems if cli_config.eval_every > 0 else None,
+        eval_split=cli_config.eval_split,
     )
 
     # Create streaming config if requested
@@ -295,6 +299,7 @@ async def cli_main(cli_config: CLIConfig):
             temperature=cli_config.temperature,
             base_url=cli_config.base_url,
             renderer_name=renderer_name,
+            eval_split=cli_config.eval_split,
         )
 
         print_results_table(eval_results)
